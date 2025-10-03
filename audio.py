@@ -50,7 +50,6 @@ class WhatsappAudioStream:
             self.save_recording(filepath)
             
     def save_recording(self, filepath):
-        """Save the buffered audio to a WAV file"""
         if not self.input_audio_buffer:
             raise RuntimeError("No audio data to save.")
         
@@ -69,3 +68,27 @@ class WhatsappAudioStream:
             # Convert float32 to int16
             audio_int16 = (audio_data * 32767).astype(np.int16)
             wf.writeframes(audio_int16.tobytes())
+            
+    def play(self, filepath: str):
+        if not Path(filepath).exists():
+            raise FileNotFoundError(f"Audio file not found: {filepath}")
+        
+        # Read the WAV file
+        with wave.open(filepath, 'rb') as wf:
+            n_channels = wf.getnchannels()
+            sample_rate = wf.getframerate()
+            n_frames = wf.getnframes()
+            
+            audio_data = wf.readframes(n_frames)
+        
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        
+        # Reshape to (frames, channels)
+        audio_array = audio_array.reshape(-1, n_channels)
+        
+        # Convert to float32 (sounddevice expects float32 in range [-1.0, 1.0])
+        audio_float = audio_array.astype(np.float32) / 32767.0
+        
+        sd.play(audio_float, samplerate=sample_rate, device=self.output_device)
+        sd.wait()
+        
