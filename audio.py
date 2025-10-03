@@ -1,58 +1,71 @@
+from pathlib import Path
 import sounddevice as sd
+import numpy as np
 import time
+import wave
 
-INPUT_DEVICE = 'CABLE-A Output (VB-Audio Virtua, MME'
-OUTPUT_DEVICE ='CABLE-B Input (VB-Audio Virtual, MME'
-
-def audio_callback(indata, outdata, frames, time, status):
-    """Callback function to handle real-time audio streaming"""
-    if status:
-        print(f"Audio callback status: {status}")
-    # Copy input data directly to output
-    outdata[:] = indata
-
-def get_whatsapp_audio():
-    try:
-        # Get input device info
-        input_device_info = sd.query_devices(INPUT_DEVICE, 'input')
+class WhatsappAudioStream:
+    def __init__(self, input_device: str, output_device: str):
+        self.input_device = input_device
+        input_device_info = sd.query_devices(input_device, 'input')
         print("Input device info:")
         print(input_device_info)
         
-        # Get output device info  
-        output_device_info = sd.query_devices(OUTPUT_DEVICE, 'output')
+        output_device_info = sd.query_devices(output_device, 'output')
+        self.output_device = output_device
         print("\nOutput device info:")
-        print(output_device_info)
-        
-        sample_rate = int(input_device_info['default_samplerate'])
-        input_channels = input_device_info['max_input_channels']
-        output_channels = min(input_channels, output_device_info['max_output_channels'])
-        
-        print(f"\nInput device '{INPUT_DEVICE}' found.")
-        print(f"Output device: {output_device_info['name']}")
-        print(f"Sample rate: {sample_rate} Hz")
-        print(f"Input channels: {input_channels}, Output channels: {output_channels}")
-        print("Starting real-time audio streaming...")
-        print("Press Ctrl+C to stop streaming.")
-        
-        # Create duplex stream for real-time audio
-        with sd.Stream(
-            device=(INPUT_DEVICE, OUTPUT_DEVICE),
-            samplerate=sample_rate,
-            channels=(input_channels, output_channels),
-            callback=audio_callback,
-            latency='low'
-        ):
-            print("Streaming started. Audio is now being streamed in real-time.")
-            try:
-                while True:
-                    time.sleep(0.1)  # Keep the main thread alive
-            except KeyboardInterrupt:
-                print("\nStopping audio stream...")
+        print(output_device_info)   
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        print("Available devices:")
-        print(sd.query_devices())
+        self.input_sample_rate = int(input_device_info['default_samplerate'])
+
+        self.input_channels = 2
+        self.output_channels = output_device_info['max_output_channels']
         
-if __name__ == "__main__":
-    get_whatsapp_audio()
+        self.input_audio_buffer = []
+    
+    def record_audio_callback(self, indata, frames, time_info, status):
+        self.input_audio_buffer.append(indata.copy())
+    
+    def verify_stop(self) -> bool:
+        return False
+    
+    def record(self, filepath: str):
+        self.input_audio_buffer = []
+        
+        with sd.InputStream(
+            device=self.input_device,
+            samplerate= self.input_sample_rate,
+            channels= self.input_channels,
+            callback=self.record_audio_callback,
+            latency="low"
+        ):
+            print("Record streaming started\n")
+            
+            try:
+                while not self.verify_stop():
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                pass
+            
+            self.save_recording(filepath)
+            
+    def save_recording(self, filepath):
+        """Save the buffered audio to a WAV file"""
+        if not self.input_audio_buffer:
+            raise RuntimeError("No audio data to save.")
+        
+        # Concatenate all audio chunks
+        audio_data = np.concatenate(self.input_audio_buffer, axis=0)
+        
+        # Ensure the directory exists
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save as WAV file
+        with wave.open(filepath, 'wb') as wf:
+            wf.setnchannels(self.input_channels)
+            wf.setsampwidth(2)  # 2 bytes for int16
+            wf.setframerate(self.input_sample_rate)
+            
+            # Convert float32 to int16
+            audio_int16 = (audio_data * 32767).astype(np.int16)
+            wf.writeframes(audio_int16.tobytes())

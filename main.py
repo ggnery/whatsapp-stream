@@ -1,16 +1,11 @@
-import threading
-from audio import get_whatsapp_audio
-from video import get_whatsapp_window
+from audio import WhatsappAudioStream
+
+INPUT_DEVICE = 'CABLE-A Output (VB-Audio Virtua, MME'
+OUTPUT_DEVICE ='CABLE-B Input (VB-Audio Virtual, MME'
 
 def main():
-    t1 = threading.Thread(target=get_whatsapp_audio)
-    t2 = threading.Thread(target=get_whatsapp_window)
+    stream = WhatsappAudioStream(INPUT_DEVICE, OUTPUT_DEVICE)
+    stream.record("test.wav")
     
-    t1.start()
-    t2.start()
-    
-    t1.join()
-    t2.join()
-
 if __name__ == "__main__":
     main()
