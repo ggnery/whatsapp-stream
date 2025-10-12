@@ -5,21 +5,18 @@ import time
 import threading
 from faster_whisper import WhisperModel
 from scipy import signal
+import re
 
 class WhatsappAudioStream:
-    def __init__(self, input_device: str, output_device: str, 
+    def __init__(self, input_device: str, output_device: str,
+                 start_stop_keyword: str, 
+                 chunk_duration: float,
                  model_size: str = "base", 
                  device: str = "cpu",
                  compute_type: str = "int8"):
         """
         Initialize audio stream with real-time STT capability.
-        
-        Args:
-            input_device: Input audio device name
-            output_device: Output audio device name
-            model_size: Whisper model size (tiny, base, small, medium, large-v2, large-v3)
-            device: cpu or cuda
-            compute_type: int8, int16, float16, float32
+
         """
         self.input_device = input_device
         input_device_info = sd.query_devices(input_device, 'input')
@@ -41,17 +38,24 @@ class WhatsappAudioStream:
         
         # STT configuration
         self.whisper_sample_rate = 16000  # Whisper expects 16kHz
-        self.chunk_duration = 2.0  # Process every 5 seconds
+        self.chunk_duration = chunk_duration  # Process every 5 seconds
         self.chunk_samples = int(self.chunk_duration * self.input_sample_rate)
         
         # Initialize Whisper model
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
         
         # Threading controls
-        self.transcription_thread = None
         self.should_transcribe = False
-        self.transcription_lock = threading.Lock()
         
+        self.transcription_thread = None
+        self.query_thread = None
+        
+        self.transcription_lock = threading.Lock()    
+            
+        # Query
+        self.start_stop_keyword = start_stop_keyword
+        self.query = None  
+          
         # Transcription results
         self.transcriptions = []  
     
@@ -121,36 +125,101 @@ class WhatsappAudioStream:
                     vad_parameters=dict(min_silence_duration_ms=500)
                 )
                 
-                # Collect transcription
+                # Collect transcription - FIX: moved append outside loop
                 transcription_text = ""
                 for segment in segments:
                     transcription_text += segment.text + " "
-
-                    self.transcriptions.append(transcription_text)
-                    print(f"\n{transcription_text}")
+                
+                # Only append once per transcription cycle
+                if transcription_text.strip():
+                    with self.transcription_lock:
+                        self.transcriptions.append(transcription_text.strip())
+                    print(f"\n{transcription_text.strip()}")
                         
             except Exception as e:
                 print(f"Transcription error: {e}")
         
         print("Transcription worker stopped")
     
-    def verify_stop(self) -> bool:
-        """Override this method to implement custom stop logic."""
-        return False
+    def keyword_in_text(self, text: str, keyword: str) -> bool:
+        """Check if keyword exists as a whole word in text."""
+        # Use word boundaries to match whole words only
+        pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
+        return bool(re.search(pattern, text.lower()))
     
+    def query_worker(self):
+        """Background thread for detecting and extracting queries between keywords."""
+        print("Query worker started")
+        
+        self.query = None
+        is_recording_query = False
+        current_query = []
+        last_processed_index = 0
+        
+        while self.should_transcribe:
+            time.sleep(0.3)  # Check frequently for responsiveness
+            
+            # Process new transcriptions with proper locking
+            with self.transcription_lock:
+                if last_processed_index >= len(self.transcriptions):
+                    continue
+                    
+                # Get new transcriptions since last check
+                new_transcriptions = self.transcriptions[last_processed_index:].copy()
+                last_processed_index = len(self.transcriptions)
+            
+            # Process each new transcription
+            for transcription in new_transcriptions:
+                text = transcription.strip()
+                
+                # Use word boundary detection for keyword
+                if self.keyword_in_text(text, self.start_stop_keyword):
+                    if not is_recording_query:
+                        # Start recording query
+                        is_recording_query = True
+                        current_query = []
+                        print(f"\n[Query recording started]")
+                    else:
+                        # Stop recording query and end session
+                        is_recording_query = False
+                        query_text = " ".join(current_query).strip()
+                        if query_text:
+                            self.query = query_text
+                            print(f"\n[Query captured: {self.query}]")
+                        else:
+                            print(f"\n[Empty query (keyword detected twice in succession)]")
+                        
+                        # Signal to stop recording
+                        self.should_transcribe = False
+                        return
+                        
+                elif is_recording_query:
+                    # Collect text for the current query
+                    if text:
+                        current_query.append(text)
+        
+        print("Query worker stopped")
+      
     def record(self):
         """
-        Record audio with real-time STT.
-
+        Record audio with real-time STT and return captured query.
         """
         self.input_audio_buffer.clear()
         self.transcription_buffer.clear()
-        self.transcriptions.clear()
         
-        # Start transcription thread if enabled
+        with self.transcription_lock:
+            self.transcriptions.clear()
+        
+        self.query = None  # Clear previous query
+        
+        # Start transcription thread
         self.should_transcribe = True
         self.transcription_thread = threading.Thread(target=self.transcription_worker, daemon=True)
         self.transcription_thread.start()
+        
+        # Start query detection thread
+        self.query_thread = threading.Thread(target=self.query_worker, daemon=True)
+        self.query_thread.start()
         
         with sd.InputStream(
             device=self.input_device,
@@ -160,9 +229,10 @@ class WhatsappAudioStream:
             latency="low"
         ):
             print("Record streaming started (press Ctrl+C to stop)")
+            print(f"Say '{self.start_stop_keyword}' to start/stop query capture")
             
             try:
-                while not self.verify_stop():
+                while self.should_transcribe:
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 print("\n\nStopping recording...")
@@ -170,11 +240,8 @@ class WhatsappAudioStream:
             # Stop transcription
             self.should_transcribe = False
             self.transcription_thread.join(timeout=3.0)
+            self.query_thread.join(timeout=3.0)
             
-            # Print full transcription
-            print("\n" + "="*50)
-            print("FULL TRANSCRIPTION:")
-            print("="*50)
-            for trans in self.transcriptions:
-                print(trans)
-            print("="*50)
+            # Return with proper locking
+            with self.transcription_lock:
+                return self.query, self.transcriptions.copy()
