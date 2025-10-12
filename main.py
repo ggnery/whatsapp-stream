@@ -9,12 +9,11 @@ def main():
     # print("Available audio devices:")
     # print(sd.query_devices())
     
-
     stream = WhatsappAudioStream(
         input_device=INPUT_DEVICE,  
         output_device=OUTPUT_DEVICE,
         start_stop_keyword="banana",
-        chunk_duration=2.0,
+        chunk_duration=20.0,
         model_size="base",  # Options: tiny, base, small, medium, large-v3
         device="cpu",  # Use "cuda" for GPU
         compute_type="int8" 

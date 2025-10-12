@@ -5,6 +5,7 @@ import time
 import threading
 from faster_whisper import WhisperModel
 from scipy import signal
+import string
 import re
 
 class WhatsappAudioStream:
@@ -172,16 +173,51 @@ class WhatsappAudioStream:
             for transcription in new_transcriptions:
                 text = transcription.strip()
                 
-                # Use word boundary detection for keyword
-                if self.keyword_in_text(text, self.start_stop_keyword):
+                # Count keyword occurrences in this transcription
+                pattern = r'\b' + re.escape(self.start_stop_keyword.lower()) + r'\b'
+                keyword_matches = list(re.finditer(pattern, text.lower()))
+                
+                if len(keyword_matches) >= 2:
+                    # Both keywords in same transcription - extract query between them
+                    first_match = keyword_matches[0]
+                    second_match = keyword_matches[1]
+                    
+                    # Extract text between first and second keyword
+                    query_text = text[first_match.end():second_match.start()].strip()
+                    
+                    if query_text:
+                        self.query = query_text
+                        print(f"\n[Query captured: {self.query}]")
+                    else:
+                        print(f"\n[Empty query (keywords too close together)]")
+                    
+                    # Signal to stop recording
+                    self.should_transcribe = False
+                    return
+                    
+                elif len(keyword_matches) == 1:
+                    # Single keyword in this transcription
                     if not is_recording_query:
                         # Start recording query
                         is_recording_query = True
                         current_query = []
                         print(f"\n[Query recording started]")
+                        
+                        # Get any text AFTER the keyword in this transcription
+                        match = keyword_matches[0]
+                        text_after_keyword = text[match.end():].strip()
+                        if text_after_keyword:
+                            current_query.append(text_after_keyword)
                     else:
-                        # Stop recording query and end session
+                        # Stop recording query
                         is_recording_query = False
+                        
+                        # Get any text BEFORE the keyword in this transcription
+                        match = keyword_matches[0]
+                        text_before_keyword = text[:match.start()].strip()
+                        if text_before_keyword:
+                            current_query.append(text_before_keyword)
+                        
                         query_text = " ".join(current_query).strip()
                         if query_text:
                             self.query = query_text
@@ -194,12 +230,28 @@ class WhatsappAudioStream:
                         return
                         
                 elif is_recording_query:
-                    # Collect text for the current query
+                    # No keyword in this transcription, but we're recording
                     if text:
                         current_query.append(text)
-        
+    
         print("Query worker stopped")
-      
+    
+    def clean_query(self, text: str) -> str:
+        """Remove leading/trailing whitespace and punctuation from query."""
+        if not text:
+            return ""
+        
+        # Strip whitespace first
+        text = text.strip()
+        
+        # Remove leading punctuation
+        text = text.lstrip(string.punctuation + ' ')
+        
+        # Final whitespace cleanup
+        text = text.strip()
+        
+        return text  
+    
     def record(self):
         """
         Record audio with real-time STT and return captured query.
@@ -244,4 +296,4 @@ class WhatsappAudioStream:
             
             # Return with proper locking
             with self.transcription_lock:
-                return self.query, self.transcriptions.copy()
+                return self.clean_query(self.query), self.transcriptions.copy()
