@@ -1,12 +1,14 @@
 # WhatsApp Stream
 
-A Python application that captures and streams both video and audio from WhatsApp in real-time using screen capture and virtual audio cables.
+A Python application that captures audio from WhatsApp calls in real-time, transcribes speech using Whisper AI, and responds with text-to-speech using Kokoro TTS through virtual audio cables.
 
 ## Features
 
-- **Real-time Video Capture**: Captures the WhatsApp window and displays it with optional processing
-- **Real-time Audio Streaming**: Routes audio from virtual audio cables for WhatsApp calls
-- **Multi-threaded**: Runs video and audio capture simultaneously
+- **Real-time Audio Capture**: Captures audio from virtual audio cables during WhatsApp calls
+- **Speech-to-Text**: Real-time transcription using OpenAI's Whisper model
+- **Query Detection**: Keyword-based query capture system for interactive responses
+- **Text-to-Speech**: Responds with natural speech using Kokoro TTS
+- **Multi-threaded**: Runs audio capture, transcription, and query processing simultaneously
 - **Cross-platform**: Works on Windows, macOS, and Linux
 
 ## Requirements
@@ -26,92 +28,121 @@ This application requires virtual audio cables to route WhatsApp audio. You'll n
 ## Installation
 
 1. **Clone the repository**:
-   ```bash
+   ```powershell
    git clone <repository-url>
    cd whatsapp-stream
    ```
 
-2. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **Install Python dependencies (using uv)**
 
-3. **Install additional system dependencies** (if needed):
-   
-   **Windows Only**:
-   - Most dependencies should install automatically with pip
-   - Make sure you have Microsoft Visual C++ Build Tools if compilation is needed
+This project uses `pyproject.toml` and the `uv` package manager. Ensure you have Python 3.12 installed and `uv` is available on your system.
+
+Install dependencies using `uv`:
+
+```powershell
+# Create a virtual environment
+uv venv
+
+# Activate the virtual environment (Windows PowerShell)
+./.venv/Scripts/activate.ps1
+
+# Install pip in the virtual environment
+uv pip install pip
+
+# Sync dependencies from pyproject.toml
+uv sync
+```
+
+
 
 ## Setup
 
 ### Audio Setup
 1. Install VB-Audio Virtual Cable from [VB-Audio website](https://vb-audio.com/Cable/)
 2. Configure your system audio:
-   - Set WhatsApp to use CABLE-A as output
-   - The application will route audio from CABLE-A to CABLE-B
-3. If your virtual audio cable devices have different names, update the device names in `audio.py`:
-   ```python
-   INPUT_DEVICE = 'Your-Input-Device-Name'
-   OUTPUT_DEVICE = 'Your-Output-Device-Name'
-   ```
+   - Set WhatsApp (or the WhatsApp Desktop app) to use the virtual cable as its output device.
+   - This application reads audio from the virtual cable input.
+3. If your virtual audio cable devices have different names, update the device names in `audio.py` accordingly. To list available audio devices on your system, run:
 
-### Video Setup
+```powershell
+python -c "import sounddevice as sd; print(sd.query_devices())"
+```
+
+Then set the input/output names in `audio.py` to match the device you want to use.
+
+### WhatsApp Setup
 1. Make sure WhatsApp Desktop is installed and running
-2. The application will automatically detect the WhatsApp window
+2. Configure WhatsApp to use the virtual audio cable for audio output during calls
 
 ## Usage
 
-### Run the complete application
+### Run the application
 ```bash
 python main.py
 ```
 
-This will start both video capture and audio streaming in separate threads.
+This will start:
+1. Real-time audio capture from the configured input device
+2. Continuous speech transcription using Whisper
+3. Keyword-based query detection (default keyword: "banana")
+4. TTS response generation using Kokoro when a query is captured
 
-### Run components separately
+### How it works
+1. The application listens for audio from your virtual audio cable
+2. It transcribes speech in real-time and displays the transcription
+3. When you say the keyword (e.g., "banana"), it starts recording your query
+4. Say the keyword again to stop recording and process the query
+5. The application generates a TTS response and plays it through the output device
 
-**Video capture only**:
-```bash
-python video.py
-```
-
-**Audio streaming only**:
+### Run audio capture only
 ```bash
 python audio.py
 ```
 
 ## Controls
 
-- **Video Window**: Press `q` to quit the video capture
-- **Audio Stream**: Press `Ctrl+C` to stop audio streaming
-- **Main Application**: Press `Ctrl+C` to stop both video and audio
+- **Main Application**: Press `Ctrl+C` to stop audio capture and transcription
+- **Query Capture**: Say your configured keyword (default: "banana") to start/stop query recording
+- **Audio Stream**: Press `Ctrl+C` to stop audio streaming when running `audio.py` directly
 
 ## Configuration
 
 ### Audio Configuration
-Edit the device names in `audio.py` if your virtual audio cables have different names:
+Edit the device names in `main.py` to match your virtual audio cables. Use the `sounddevice` query above to find exact device names.
+
+Example configuration in `main.py`:
+
 ```python
-INPUT_DEVICE = 'CABLE-A Output (VB-Audio Virtual, MME'
+INPUT_DEVICE = "CABLE-A Output (VB-Audio Virtua, MME"
 OUTPUT_DEVICE = 'CABLE-B Input (VB-Audio Virtual, MME'
 ```
 
-### Video Configuration
-The video capture automatically detects the WhatsApp window. The application shows:
-- Original WhatsApp window capture
-- Processed grayscale version
+### Application Configuration
+You can customize the following parameters in `main.py`:
+
+- **start_stop_keyword**: The keyword used to start/stop query recording (default: "banana")
+- **chunk_duration**: How often to process audio for transcription (default: 20.0 seconds)
+- **model_size**: Whisper model size - "tiny", "base", "small", "medium", "large-v3" (default: "base")
+- **device**: Processing device - "cpu" or "cuda" for GPU acceleration (default: "cpu")
+- **compute_type**: Computation precision - "int8", "float16", "float32" (default: "int8")
 
 ## Troubleshooting
 
-### Audio Issues
-- **"Device not found" error**: 
-  - Check that virtual audio cables are properly installed
-  - Run `python -c "import sounddevice as sd; print(sd.query_devices())"` to list available devices
-  - Update device names in `audio.py` to match your system
+### Audio issues
+- **"Device not found" error**:
+  - Verify the virtual audio cable is installed and configured.
+  - Run `python -c "import sounddevice as sd; print(sd.query_devices())"` to list available devices and use the exact device names.
+  - Update device names in `main.py` to match your system.
 
-### Video Issues
-- **"WhatsApp window not found" error**:
-  - Make sure WhatsApp Desktop is running and visible
-  - The window title should contain only "WhatsApp" call
+- **No transcription appearing**:
+  - Check that audio is being captured from the correct input device.
+  - Ensure WhatsApp is configured to output audio to your virtual cable.
+  - Verify the virtual audio cable is properly routing audio.
+
+- **TTS not playing**:
+  - Check that the output device is correctly configured.
+  - Ensure the virtual audio cable output device is available and not in use by other applications.
+  - Verify WhatsApp is configured to receive audio from your virtual cable input.
 
 
 ## License
