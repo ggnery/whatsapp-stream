@@ -1,0 +1,8 @@
+assemblyai
+beautifulsoup4
+chromedriver-autoinstaller
+google-generativeai
+instaloader
+python-dotenv
+rich
+selenium
