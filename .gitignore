@@ -1,5 +1,21 @@
+# Arquivos sensíveis
 .env
+client.json
+token.json
+
+# Pastas com dados gerados pelo pipeline
 audios/
-link-reels/
+info-reels/
 transcriptions/
+transcriptions-pdf/
 videos/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/

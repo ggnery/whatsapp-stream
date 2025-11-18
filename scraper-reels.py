@@ -1,5 +1,5 @@
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from rich import print
 from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
@@ -16,9 +16,8 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 # Configs
 USERNAME = "testemetaglass"
 PASSWORD = "Alberto1812!"
-CHROMEDRIVER_PATH = r"C:\Users\alber\miniconda3\envs\metaglass-env\lib\site-packages\chromedriver_autoinstaller\142\chromedriver.exe"
-TARGET_PROFILE = "brecho.lzo"       # perfil alvo (sem @)
-DATA_DIR = "link-reels"             # diretório onde salvar o TXT
+CHROMEDRIVER_PATH = r"c:\Users\alber\miniconda3\envs\metaglass-env\Lib\site-packages\chromedriver_autoinstaller\142\chromedriver.exe"
+TARGET_PROFILE = "testemetaglass"       # perfil alvo (sem @)
 HEADLESS = True                     
 DEFAULT_TIMEOUT = 20               
 SCROLL_PAUSE = 1.5                  
@@ -128,9 +127,27 @@ def login(driver):
         print("[bold red]❌ Falha no login (não houve confirmação em tempo hábil).[/bold red]")
         return False
 
+def extract_shortcode_from_url(url: str):
+    """Extrai o shortcode de uma URL do Instagram."""
+    try:
+        path = urlparse(url.strip()).path.strip("/")
+        parts = [p for p in path.split("/") if p]
+        for i, p in enumerate(parts):
+            if p in ("reel", "p", "tv") and i + 1 < len(parts):
+                return parts[i + 1].split("?")[0].split("#")[0]
+        if parts:
+            return parts[-1].split("?")[0].split("#")[0] or None
+    except Exception:
+        pass
+    return None
+
 def extract_reel_links(html):
+    """
+    Extrai TODOS os links de Reels do HTML (sem filtrar).
+    Retorna um dicionário {shortcode: link} para facilitar o registro.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    urls = set()
+    links_dict = {}
     for a in soup.select("a[href*='/reel/']"):
         href = a.get("href", "")
         if "/reel/" in href:
@@ -139,19 +156,26 @@ def extract_reel_links(html):
             full = full.split("?")[0].split("#")[0]
             if not full.endswith("/"):
                 full += "/"
-            urls.add(full)
-    return urls
+            
+            sc = extract_shortcode_from_url(full)
+            if sc:
+                links_dict[sc] = full
+    return links_dict
 
 def crawl_reels(driver, profile):
+    """
+    Coleta TODOS os links de Reels da página (sem filtrar).
+    A filtragem será feita depois, comparando com o CSV.
+    """
     url = f"{INSTAGRAM}/{profile}/reels/"
     print(f"🌍 Acessando: [cyan]{url}[/cyan]")
     driver.get(url)
     time.sleep(2)
 
-    all_links = set()
+    all_links_dict = {}
     last_count = 0
     stagnant = 0
-
+    
     with Progress(
         TextColumn("[bold magenta]Rolando e coletando links de Reels...[/bold magenta]"),
         BarColumn(),
@@ -161,36 +185,74 @@ def crawl_reels(driver, profile):
     ) as progress:
         task = progress.add_task("", total=MAX_SCROLLS)
         for i in range(MAX_SCROLLS):
-            # Coleta visível
-            all_links |= extract_reel_links(driver.page_source)
+            # Coleta TODOS os links visíveis (sem filtrar)
+            new_links = extract_reel_links(driver.page_source)
+            all_links_dict.update(new_links)
 
             # Scroll down
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(SCROLL_PAUSE)
 
             # Heurística de estagnação (nada novo em N ciclos)
-            if len(all_links) == last_count:
+            if len(all_links_dict) == last_count:
                 stagnant += 1
             else:
                 stagnant = 0
-                last_count = len(all_links)
+                last_count = len(all_links_dict)
 
             progress.update(task, advance=1)
 
             if stagnant >= 6:  # ~6 ciclos sem novidades → chega
                 break
 
-    print(f"📦 Total de links coletados: [green]{len(all_links)}[/green]")
-    return sorted(all_links)
+    print(f"📦 Total de links coletados da página: [green]{len(all_links_dict)}[/green]")
+    return all_links_dict
 
-def save_links(profile, links):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    out_path = os.path.join(DATA_DIR, f"{profile}.txt")
-    with open(out_path, "w", encoding="utf-8") as f:
-        for url in links:
-            f.write(url + "\n")
-    print(f"💾 Links salvos em: [green]{out_path}[/green]")
-    return out_path
+def save_links(profile, links_dict):
+    """
+    Salva links no CSV.
+    Adiciona links que não estão no CSV ou que foram removidos (status != 'downloaded').
+    links_dict é um dicionário {shortcode: link}
+    """
+    try:
+        from csv_manager import register_link, load_registry
+        registry = load_registry()
+        
+        count_new = 0
+        count_existing_downloaded = 0
+        count_rediscovered = 0  # Links que estavam no CSV mas foram removidos
+        
+        for shortcode, link in links_dict.items():
+            if shortcode not in registry:
+                # Link completamente novo - adiciona
+                register_link(link, shortcode)
+                count_new += 1
+            else:
+                # Link já existe no CSV
+                entry = registry[shortcode]
+                status = entry.get("status", "")
+                
+                if status == "downloaded":
+                    # Já foi baixado - mantém como está
+                    count_existing_downloaded += 1
+                else:
+                    # Está no CSV mas não foi baixado (ou foi removido)
+                    # Re-adiciona como "discovered" para passar pelo pipeline novamente
+                    register_link(link, shortcode)
+                    count_rediscovered += 1
+        
+        from csv_manager import get_csv_path
+        csv_path = get_csv_path()
+        print(f"💾 Links processados no CSV: [green]{csv_path}[/green]")
+        print(f"   → {count_new} novos links adicionados")
+        if count_rediscovered > 0:
+            print(f"   → {count_rediscovered} links re-descobertos (serão processados novamente)")
+        if count_existing_downloaded > 0:
+            print(f"   → {count_existing_downloaded} links já baixados (mantidos)")
+        return csv_path
+    except Exception as e:
+        print(f"[bold red]❌ Erro ao salvar links no CSV: {e}[/bold red]")
+        return None
 
 def main():
     print("\n" + "=" * 60)

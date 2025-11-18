@@ -3,7 +3,11 @@ from urllib.parse import urlparse
 from pathlib import Path
 import glob
 import os
-import sys # Importar sys para sair do script em caso de erro
+import sys 
+from csv_manager import (
+    is_downloaded, register_download, get_next_number_for_date,
+    get_links_from_registry, get_final_filename
+)
 
 def extract_shortcode(url: str):
     """Extrai o shortcode de URLs /reel/<code>/, /p/<code>/ ou /tv/<code>/."""
@@ -21,45 +25,60 @@ def extract_shortcode(url: str):
         pass
     return None
 
-def shortcodes_from_txt(txt_path: str):
-    """Lê o TXT e retorna shortcodes únicos (deduplicados)."""
-    codes = set()
-    with open(txt_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            sc = extract_shortcode(line)
-            if sc:
-                codes.add(sc)
-    return sorted(codes)
+def shortcodes_from_csv():
+    """
+    Lê o CSV e retorna shortcodes únicos que precisam ser processados.
+    Retorna apenas links com status "discovered" (não "downloaded").
+    Retorna também um dicionário mapeando shortcode -> link original.
+    """
+    from csv_manager import load_registry
+    registry = load_registry()
+    shortcodes = []
+    shortcode_to_link = {}
+    
+    for sc, entry in registry.items():
+        link = entry.get("insta_link", "")
+        download_status = entry.get("download_status", "")
+        
+        # Só inclui se tiver link E download_status for "discovered" (não "downloaded")
+        if link and download_status == "discovered":
+            shortcodes.append(sc)
+            shortcode_to_link[sc] = link
+    
+    return sorted(shortcodes), shortcode_to_link
 
-def unique_path(base_path: Path) -> Path:
-    """Gera nome único se já existir (ex.: dd-mm-yyyy.mp4 -> dd-mm-yyyy_2.mp4)."""
-    if not base_path.exists():
-        return base_path
-    stem, suf = base_path.stem, base_path.suffix
-    i = 2
-    while True:
-        candidate = base_path.with_name(f"{stem}_{i}{suf}")
-        if not candidate.exists():
-            return candidate
-        i += 1
+def get_unique_filename_for_date(date_str: str, out_dir: Path) -> Path:
+    """
+    Gera nome único para uma data, considerando múltiplos vídeos com mesma data.
+    Formato: dd-mm-yyyy-N.mp4 onde N é o próximo número disponível.
+    """
+    # Verifica quantos vídeos já existem com essa data
+    next_num = get_next_number_for_date(date_str, out_dir)
+    
+    if next_num == 1:
+        # Primeiro vídeo com essa data: usa apenas a data
+        base_name = f"{date_str}.mp4"
+    else:
+        # Múltiplos vídeos: adiciona número
+        base_name = f"{date_str}-{next_num}.mp4"
+    
+    return out_dir / base_name
 
 def main():
     # Define os diretórios de forma relativa
-    links_dir = "link-reels"
     out_dir = "videos"
 
-    # Procura pelo arquivo .txt na pasta de links
-    txt_files = glob.glob(os.path.join(links_dir, "*.txt"))
-    if len(txt_files) == 0:
-        print(f"❌ Erro: Nenhum arquivo .txt encontrado na pasta '{links_dir}'.")
+    # Lê shortcodes do CSV
+    try:
+        shortcodes, shortcode_to_link = shortcodes_from_csv()
+    except Exception as e:
+        print(f"❌ Erro ao ler CSV: {e}")
         sys.exit(1)
-    elif len(txt_files) > 1:
-        print(f"⚠️ Aviso: Múltiplos arquivos .txt encontrados em '{links_dir}'. Usando o primeiro: {os.path.basename(txt_files[0])}")
-    txt_path = txt_files[0]
-
+    
+    if len(shortcodes) == 0:
+        print(f"Nenhum vídeo novo para baixar. Todos os vídeos já foram processados.")
+        print(f"Concluído: 0 baixados, 0 falharam, 0 pulados. Vídeos em: {Path(out_dir).resolve()}")
+        return  # Sai sem erro para continuar o pipeline
 
     # Instaloader configurado para baixar SOMENTE o vídeo .mp4
     loader = instaloader.Instaloader(
@@ -76,31 +95,31 @@ def main():
 
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    shortcodes = shortcodes_from_txt(txt_path)
     print(f"Encontrados {len(shortcodes)} shortcodes únicos para download.")
 
     ok = 0
     fail = 0
     skip = 0 # Contador para vídeos pulados
+    
+    # Rastreia nomes de arquivos usados nesta execução para evitar sobrescrita
+    used_filenames_this_run = set()
+    
     for sc in shortcodes:
         try:
+            # --- VERIFICAÇÃO ANTES DE BAIXAR (usando CSV) ---
+            if is_downloaded(sc):
+                final_name = get_final_filename(sc)
+                print(f"[PULANDO] {sc} já foi baixado: {final_name}")
+                skip += 1
+                continue
+            # --- FIM DA VERIFICAÇÃO ---
+            
             post = instaloader.Post.from_shortcode(loader.context, sc)
 
             # Se não for vídeo, pula (como Reels é vídeo, mas fica a checagem)
             if not post.is_video:
                 print(f"[INFO] {sc} não é vídeo — ignorando.")
                 continue
-
-            # --- LÓGICA PARA PULAR VÍDEOS JÁ EXISTENTES ---
-            # Pega a data e verifica se um arquivo com esse padrão de nome já existe
-            date_str = post.date_local.strftime("%d-%m-%Y")
-            # Procura por 'dd-mm-yyyy.mp4' ou 'dd-mm-yyyy_*.mp4'
-            existing_files = list(glob.glob(os.path.join(out_dir, f"{date_str}*.mp4")))
-            if existing_files:
-                print(f"[PULANDO] Vídeo para {sc} (data: {date_str}) já existe: {Path(existing_files[0]).name}")
-                skip += 1
-                continue
-            # --- FIM DA LÓGICA ---
 
             # Baixa o post (gera <shortcode>.mp4 e às vezes .txt; depois limpamos/renomeamos)
             loader.download_post(post, target=out_dir)
@@ -113,15 +132,66 @@ def main():
 
             # Data de publicação (local) no formato dd-mm-yyyy
             date_str = post.date_local.strftime("%d-%m-%Y")
+            
+            # Link original do post
+            link = shortcode_to_link.get(sc, f"https://www.instagram.com/reel/{sc}/")
 
             # Renomeia cada .mp4 encontrado
+            # Para carrosséis, precisa calcular o número base uma única vez
+            base_num = get_next_number_for_date(date_str, Path(out_dir))
+            
             for idx, old in enumerate(mp4_candidates, start=1):
                 old_p = Path(old)
-                # Se houver mais de um vídeo (carrossel), acrescenta sufixo _2, _3...
-                base_name = date_str if len(mp4_candidates) == 1 else f"{date_str}_{idx}"
-                new_p = unique_path(Path(out_dir) / f"{base_name}.mp4")
+                original_filename = old_p.name
+                
+                # Para múltiplos vídeos do mesmo post (carrossel), usa numeração sequencial
+                if len(mp4_candidates) > 1:
+                    # Carrossel: usa base_num + (idx - 1) para sequência contínua
+                    final_name = f"{date_str}-{base_num + idx - 1}.mp4"
+                else:
+                    # Vídeo único: usa apenas a data se for o primeiro, senão adiciona número
+                    if base_num == 1:
+                        final_name = f"{date_str}.mp4"
+                    else:
+                        final_name = f"{date_str}-{base_num}.mp4"
+                
+                # Verifica se o nome já foi usado nesta execução e ajusta se necessário
+                counter = 2
+                base_name_without_ext = final_name.replace(".mp4", "")
+                while final_name in used_filenames_this_run or (Path(out_dir) / final_name).exists():
+                    # Se o nome base já tem número (ex: dd-mm-yyyy-1), remove
+                    if base_name_without_ext.count("-") > 2:
+                        # Tem formato dd-mm-yyyy-N, pega só a data
+                        parts = base_name_without_ext.split("-")
+                        base_date = "-".join(parts[:3])  # dd-mm-yyyy
+                        final_name = f"{base_date}-{counter}.mp4"
+                    else:
+                        # Formato simples dd-mm-yyyy
+                        final_name = f"{base_name_without_ext}-{counter}.mp4"
+                    
+                    print(f"[INFO] Nome em conflito. Tentando: {final_name}")
+                    counter += 1
+                    
+                    # Proteção contra loop infinito
+                    if counter > 100:
+                        print(f"[ERRO] Não foi possível encontrar nome único após 100 tentativas")
+                        break
+                
+                # Registra nome usado
+                used_filenames_this_run.add(final_name)
+                
+                new_p = Path(out_dir) / final_name
                 old_p.replace(new_p)
-                print(f"OK: {sc} → {new_p.name}")
+                
+                # Registra no CSV
+                register_download(
+                    link=link,
+                    shortcode=sc,
+                    filename=final_name,
+                    download_status="downloaded"
+                )
+                
+                print(f"OK: {sc} → {final_name}")
 
             # Remove lixo (.txt/.json etc) que porventura tenha sido criado
             for ext in ("txt", "json", "json.xz", "xz"):

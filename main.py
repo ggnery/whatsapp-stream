@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-import os # Importar 'os' para manipular variáveis de ambiente
+import os 
 
 def run_script(script_name: str):
     """Executa um script Python e verifica o resultado."""
@@ -35,11 +35,17 @@ def run_script(script_name: str):
 
             # Lógica para extrair a saída específica de cada script
             if script_name == "scraper-reels.py":
-                summary_lines = [line for line in output_lines if "Total de links coletados:" in line or "Links salvos em:" in line]
+                summary_lines = [line for line in output_lines if "Total de links" in line or "Links processados" in line]
             elif script_name in ["download-reels.py", "video-to-audio.py"]:
                 summary_lines = [line for line in output_lines if line.strip().startswith("Concluído:")]
             elif script_name == "doc-generator.py":
-                summary_lines = [line for line in output_lines if line.strip().startswith("Concluído.") or "Markdown em:" in line]
+                summary_lines = [line for line in output_lines if line.strip().startswith("Concluído.") or "Markdown" in line]
+            elif script_name == "youtube_workflow.py":
+                summary_lines = [line for line in output_lines if "[YouTubeWorkflow] Processamento concluído!" in line or "Sucesso:" in line or "Falhas:" in line]
+            elif script_name == "gemini_summary.py":
+                summary_lines = [line for line in output_lines if "[GeminiSummary] Processamento concluído!" in line or "Sucesso:" in line or "Falhas:" in line]
+            elif script_name == "pdf_generator.py":
+                summary_lines = [line for line in output_lines if "[PDFGenerator] Processamento concluído!" in line or "PDFs gerados:" in line]
 
             # Se encontrarmos linhas específicas, imprimimos sem as bordas
             if summary_lines:
@@ -76,6 +82,9 @@ def main():
         "download-reels.py",
         "video-to-audio.py",
         "doc-generator.py",
+        "youtube_workflow.py",
+        "gemini_summary.py",
+        "pdf_generator.py",
     ]
 
     print("Iniciando o pipeline de processamento de reels")
