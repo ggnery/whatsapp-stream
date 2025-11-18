@@ -13,9 +13,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Configs
-USERNAME = "testemetaglass"
-PASSWORD = "Alberto1812!"
+USERNAME = os.getenv("INSTAGRAM_USERNAME")
+PASSWORD = os.getenv("INSTAGRAM_PASSWORD")
 CHROMEDRIVER_PATH = r"c:\Users\alber\miniconda3\envs\metaglass-env\Lib\site-packages\chromedriver_autoinstaller\142\chromedriver.exe"
 TARGET_PROFILE = "testemetaglass"       # perfil alvo (sem @)
 HEADLESS = True                     

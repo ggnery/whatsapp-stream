@@ -5,17 +5,9 @@ token.json
 
 # Pastas com dados gerados pelo pipeline
 audios/
+documents/
 info-reels/
 transcriptions/
-transcriptions-pdf/
 videos/
 
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/

@@ -127,9 +127,19 @@ pip install -r requirements.txt
 Na raiz do projeto, crie um arquivo chamado `.env` com o seguinte conteúdo:
 
 ```env
+# APIs
 ASSEMBLYAI_API_KEY="sua_chave_assemblyai_aqui"
 GEMINI_API_KEY="sua_chave_gemini_aqui"
+
+# Instagram
+INSTAGRAM_USERNAME="seu_usuario_instagram"
+INSTAGRAM_PASSWORD="sua_senha_instagram"
 ```
+
+⚠️ **Importante**: 
+- Não compartilhe este arquivo (já está no `.gitignore`)
+- Use uma conta secundária do Instagram para evitar problemas
+- As credenciais são carregadas automaticamente pelo `scraper-reels.py`
 
 ### 4. Configure o ChromeDriver
 
@@ -144,17 +154,15 @@ O Selenium precisa do ChromeDriver para automatizar o Instagram.
 CHROMEDRIVER_PATH = r"COLE_O_CAMINHO_AQUI"
 ```
 
-### 5. Configure o Instagram
+### 5. Configure o Perfil Alvo do Instagram
 
-Abra `scraper-reels.py` e configure:
+Abra `scraper-reels.py` e configure o perfil que você deseja fazer scraping:
 
 ```python
-USERNAME = "seu_usuario_instagram"
-PASSWORD = "sua_senha_instagram"
 TARGET_PROFILE = "perfil_alvo_sem_@"
 ```
 
-⚠️ **Recomendação**: Use uma conta secundária do Instagram para evitar problemas.
+⚠️ **Nota**: O usuário e senha do Instagram agora vêm do arquivo `.env` (veja seção 3.4).
 
 ## ▶️ Como Executar
 

@@ -10,7 +10,7 @@ import os
 
 # Diretórios
 TRANSCRIPTIONS_DIR = "transcriptions"
-PDF_OUTPUT_DIR = "transcriptions-pdf"
+PDF_OUTPUT_DIR = "documents"
 
 
 def setup_fonts():
