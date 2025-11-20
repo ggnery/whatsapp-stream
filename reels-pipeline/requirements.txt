@@ -1,0 +1,22 @@
+# Transcrição e IA
+assemblyai
+google-genai
+
+# YouTube API
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+
+# Instagram scraping e download
+beautifulsoup4
+instaloader
+selenium
+chromedriver-autoinstaller
+
+# Geração de documentos
+reportlab
+
+# Utilidades
+python-dotenv
+rich
